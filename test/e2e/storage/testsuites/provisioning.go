@@ -130,8 +130,10 @@ func (p *provisioningTestSuite) defineTests(driver TestDriver, pattern testpatte
 		if l.sc == nil {
 			framework.Skipf("Driver %q does not define Dynamic Provision StorageClass - skipping", dInfo.Name)
 		}
-		l.pvc = getClaim(claimSize, l.config.Framework.Namespace.Name)
-		l.pvc.Spec.StorageClassName = &l.sc.Name
+		l.pvc = framework.MakePersistentVolumeClaim(framework.PersistentVolumeClaimConfig{
+			ClaimSize:        claimSize,
+			StorageClassName: &(l.sc.Name),
+		}, l.config.Framework.Namespace.Name)
 		e2elog.Logf("In creating storage class object and pvc object for driver - sc: %v, pvc: %v", l.sc, l.pvc)
 		l.testCase = &StorageClassTest{
 			Client:       l.config.Framework.ClientSet,
@@ -151,16 +153,6 @@ func (p *provisioningTestSuite) defineTests(driver TestDriver, pattern testpatte
 		validateMigrationVolumeOpCounts(f.ClientSet, dInfo.InTreePluginName, l.intreeOps, l.migratedOps)
 	}
 
-	ginkgo.It("should provision storage with defaults", func() {
-		init()
-		defer cleanup()
-
-		l.testCase.PvCheck = func(claim *v1.PersistentVolumeClaim) {
-			PVWriteReadSingleNodeCheck(l.cs, claim, framework.NodeSelection{Name: l.config.ClientNodeName})
-		}
-		l.testCase.TestDynamicProvisioning()
-	})
-
 	ginkgo.It("should provision storage with mount options", func() {
 		if dInfo.SupportedMountOption == nil {
 			framework.Skipf("Driver %q does not define supported mount option - skipping", dInfo.Name)
@@ -172,29 +164,6 @@ func (p *provisioningTestSuite) defineTests(driver TestDriver, pattern testpatte
 		l.testCase.Class.MountOptions = dInfo.SupportedMountOption.Union(dInfo.RequiredMountOption).List()
 		l.testCase.PvCheck = func(claim *v1.PersistentVolumeClaim) {
 			PVWriteReadSingleNodeCheck(l.cs, claim, framework.NodeSelection{Name: l.config.ClientNodeName})
-		}
-		l.testCase.TestDynamicProvisioning()
-	})
-
-	ginkgo.It("should access volume from different nodes", func() {
-		init()
-		defer cleanup()
-
-		// The assumption is that if the test hasn't been
-		// locked onto a single node, then the driver is
-		// usable on all of them *and* supports accessing a volume
-		// from any node.
-		if l.config.ClientNodeName != "" {
-			framework.Skipf("Driver %q only supports testing on one node - skipping", dInfo.Name)
-		}
-
-		// Ensure that we actually have more than one node.
-		nodes := framework.GetReadySchedulableNodesOrDie(l.cs)
-		if len(nodes.Items) <= 1 {
-			framework.Skipf("need more than one node - skipping")
-		}
-		l.testCase.PvCheck = func(claim *v1.PersistentVolumeClaim) {
-			PVMultiNodeCheck(l.cs, claim, framework.NodeSelection{Name: l.config.ClientNodeName})
 		}
 		l.testCase.TestDynamicProvisioning()
 	})
@@ -424,9 +393,7 @@ func PVMultiNodeCheck(client clientset.Interface, claim *v1.PersistentVolumeClai
 
 	// Add node-anti-affinity.
 	secondNode := node
-	// Set anti-affinity preference: in case there are no nodes in the same AZ it may happen the second pod gets
-	// scheduled on the same node as the first one. In such a case the test needs to be skipped.
-	framework.SetAntiAffinityPreference(&secondNode, actualNodeName)
+	framework.SetAntiAffinity(&secondNode, actualNodeName)
 	ginkgo.By(fmt.Sprintf("checking the created volume is readable and retains data on another node %+v", secondNode))
 	command = "grep 'hello world' /mnt/test/data"
 	if framework.NodeOSDistroIs("windows") {
@@ -436,13 +403,9 @@ func PVMultiNodeCheck(client clientset.Interface, claim *v1.PersistentVolumeClai
 	framework.ExpectNoError(e2epod.WaitForPodSuccessInNamespaceSlow(client, pod.Name, pod.Namespace))
 	runningPod, err = client.CoreV1().Pods(pod.Namespace).Get(pod.Name, metav1.GetOptions{})
 	framework.ExpectNoError(err, "get pod")
+	gomega.Expect(runningPod.Spec.NodeName).NotTo(gomega.Equal(actualNodeName), "second pod should have run on a different node")
 	StopPod(client, pod)
 	pod = nil
-	// The second pod got scheduled on the same node as the first one: skip the test.
-	if runningPod.Spec.NodeName == actualNodeName {
-		e2elog.Logf("Warning: The reader pod got scheduled on the same node as the writer pod: skipping test")
-		framework.Skipf("No node available for the second pod found")
-	}
 }
 
 // TestBindingWaitForFirstConsumer tests the binding with WaitForFirstConsumer mode

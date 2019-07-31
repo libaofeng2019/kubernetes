@@ -35,8 +35,9 @@ import (
 	kubeletstatsv1alpha1 "k8s.io/kubernetes/pkg/kubelet/apis/stats/v1alpha1"
 	kubemetrics "k8s.io/kubernetes/pkg/kubelet/metrics"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2ekubelet "k8s.io/kubernetes/test/e2e/framework/kubelet"
 	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
-	"k8s.io/kubernetes/test/e2e/framework/metrics"
+	e2emetrics "k8s.io/kubernetes/test/e2e/framework/metrics"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
 	. "github.com/onsi/ginkgo"
@@ -76,16 +77,16 @@ var _ = framework.KubeDescribe("Density [Serial] [Slow]", func() {
 			{
 				podsNr:   10,
 				interval: 0 * time.Millisecond,
-				cpuLimits: framework.ContainersCPUSummary{
+				cpuLimits: e2ekubelet.ContainersCPUSummary{
 					kubeletstatsv1alpha1.SystemContainerKubelet: {0.50: 0.30, 0.95: 0.50},
 					kubeletstatsv1alpha1.SystemContainerRuntime: {0.50: 0.40, 0.95: 0.60},
 				},
-				memLimits: framework.ResourceUsagePerContainer{
-					kubeletstatsv1alpha1.SystemContainerKubelet: &framework.ContainerResourceUsage{MemoryRSSInBytes: 100 * 1024 * 1024},
-					kubeletstatsv1alpha1.SystemContainerRuntime: &framework.ContainerResourceUsage{MemoryRSSInBytes: 500 * 1024 * 1024},
+				memLimits: e2ekubelet.ResourceUsagePerContainer{
+					kubeletstatsv1alpha1.SystemContainerKubelet: &e2ekubelet.ContainerResourceUsage{MemoryRSSInBytes: 100 * 1024 * 1024},
+					kubeletstatsv1alpha1.SystemContainerRuntime: &e2ekubelet.ContainerResourceUsage{MemoryRSSInBytes: 500 * 1024 * 1024},
 				},
 				// percentile limit of single pod startup latency
-				podStartupLimits: framework.LatencyMetric{
+				podStartupLimits: e2emetrics.LatencyMetric{
 					Perc50: 16 * time.Second,
 					Perc90: 18 * time.Second,
 					Perc99: 20 * time.Second,
@@ -223,15 +224,15 @@ var _ = framework.KubeDescribe("Density [Serial] [Slow]", func() {
 			{
 				podsNr:   10,
 				bgPodsNr: 50,
-				cpuLimits: framework.ContainersCPUSummary{
+				cpuLimits: e2ekubelet.ContainersCPUSummary{
 					kubeletstatsv1alpha1.SystemContainerKubelet: {0.50: 0.30, 0.95: 0.50},
 					kubeletstatsv1alpha1.SystemContainerRuntime: {0.50: 0.40, 0.95: 0.60},
 				},
-				memLimits: framework.ResourceUsagePerContainer{
-					kubeletstatsv1alpha1.SystemContainerKubelet: &framework.ContainerResourceUsage{MemoryRSSInBytes: 100 * 1024 * 1024},
-					kubeletstatsv1alpha1.SystemContainerRuntime: &framework.ContainerResourceUsage{MemoryRSSInBytes: 500 * 1024 * 1024},
+				memLimits: e2ekubelet.ResourceUsagePerContainer{
+					kubeletstatsv1alpha1.SystemContainerKubelet: &e2ekubelet.ContainerResourceUsage{MemoryRSSInBytes: 100 * 1024 * 1024},
+					kubeletstatsv1alpha1.SystemContainerRuntime: &e2ekubelet.ContainerResourceUsage{MemoryRSSInBytes: 500 * 1024 * 1024},
 				},
-				podStartupLimits: framework.LatencyMetric{
+				podStartupLimits: e2emetrics.LatencyMetric{
 					Perc50: 5000 * time.Millisecond,
 					Perc90: 9000 * time.Millisecond,
 					Perc99: 10000 * time.Millisecond,
@@ -302,9 +303,9 @@ type densityTest struct {
 	// API QPS limit
 	APIQPSLimit int
 	// performance limits
-	cpuLimits            framework.ContainersCPUSummary
-	memLimits            framework.ResourceUsagePerContainer
-	podStartupLimits     framework.LatencyMetric
+	cpuLimits            e2ekubelet.ContainersCPUSummary
+	memLimits            e2ekubelet.ResourceUsagePerContainer
+	podStartupLimits     e2emetrics.LatencyMetric
 	podBatchStartupLimit time.Duration
 }
 
@@ -321,7 +322,7 @@ func (dt *densityTest) getTestName() string {
 
 // runDensityBatchTest runs the density batch pod creation test
 func runDensityBatchTest(f *framework.Framework, rc *ResourceCollector, testArg densityTest, testInfo map[string]string,
-	isLogTimeSeries bool) (time.Duration, []framework.PodLatencyData) {
+	isLogTimeSeries bool) (time.Duration, []e2emetrics.PodLatencyData) {
 	const (
 		podType               = "density_test_pod"
 		sleepBeforeCreatePods = 30 * time.Second
@@ -367,15 +368,15 @@ func runDensityBatchTest(f *framework.Framework, rc *ResourceCollector, testArg 
 		firstCreate metav1.Time
 		lastRunning metav1.Time
 		init        = true
-		e2eLags     = make([]framework.PodLatencyData, 0)
+		e2eLags     = make([]e2emetrics.PodLatencyData, 0)
 	)
 
 	for name, create := range createTimes {
 		watch, ok := watchTimes[name]
-		Expect(ok).To(Equal(true))
+		framework.ExpectEqual(ok, true)
 
 		e2eLags = append(e2eLags,
-			framework.PodLatencyData{Name: name, Latency: watch.Time.Sub(create.Time)})
+			e2emetrics.PodLatencyData{Name: name, Latency: watch.Time.Sub(create.Time)})
 
 		if !init {
 			if firstCreate.Time.After(create.Time) {
@@ -390,7 +391,7 @@ func runDensityBatchTest(f *framework.Framework, rc *ResourceCollector, testArg 
 		}
 	}
 
-	sort.Sort(framework.LatencySlice(e2eLags))
+	sort.Sort(e2emetrics.LatencySlice(e2eLags))
 	batchLag := lastRunning.Time.Sub(firstCreate.Time)
 
 	rc.Stop()
@@ -409,7 +410,7 @@ func runDensityBatchTest(f *framework.Framework, rc *ResourceCollector, testArg 
 }
 
 // runDensitySeqTest runs the density sequential pod creation test
-func runDensitySeqTest(f *framework.Framework, rc *ResourceCollector, testArg densityTest, testInfo map[string]string) (time.Duration, []framework.PodLatencyData) {
+func runDensitySeqTest(f *framework.Framework, rc *ResourceCollector, testArg densityTest, testInfo map[string]string) (time.Duration, []e2emetrics.PodLatencyData) {
 	const (
 		podType               = "density_test_pod"
 		sleepBeforeCreatePods = 30 * time.Second
@@ -455,7 +456,7 @@ func createBatchPodWithRateControl(f *framework.Framework, pods []*v1.Pod, inter
 // getPodStartLatency gets prometheus metric 'pod start latency' from kubelet
 func getPodStartLatency(node string) (framework.KubeletLatencyMetrics, error) {
 	latencyMetrics := framework.KubeletLatencyMetrics{}
-	ms, err := metrics.GrabKubeletMetricsWithoutProxy(node, "/metrics")
+	ms, err := e2emetrics.GrabKubeletMetricsWithoutProxy(node, "/metrics")
 	framework.ExpectNoError(err, "Failed to get kubelet metrics without proxy in node %s", node)
 
 	for _, samples := range ms {
@@ -505,12 +506,12 @@ func newInformerWatchPod(f *framework.Framework, mutex *sync.Mutex, watchTimes m
 		cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				p, ok := obj.(*v1.Pod)
-				Expect(ok).To(Equal(true))
+				framework.ExpectEqual(ok, true)
 				go checkPodRunning(p)
 			},
 			UpdateFunc: func(oldObj, newObj interface{}) {
 				p, ok := newObj.(*v1.Pod)
-				Expect(ok).To(Equal(true))
+				framework.ExpectEqual(ok, true)
 				go checkPodRunning(p)
 			},
 		},
@@ -519,47 +520,47 @@ func newInformerWatchPod(f *framework.Framework, mutex *sync.Mutex, watchTimes m
 }
 
 // createBatchPodSequential creates pods back-to-back in sequence.
-func createBatchPodSequential(f *framework.Framework, pods []*v1.Pod) (time.Duration, []framework.PodLatencyData) {
+func createBatchPodSequential(f *framework.Framework, pods []*v1.Pod) (time.Duration, []e2emetrics.PodLatencyData) {
 	batchStartTime := metav1.Now()
-	e2eLags := make([]framework.PodLatencyData, 0)
+	e2eLags := make([]e2emetrics.PodLatencyData, 0)
 	for _, pod := range pods {
 		create := metav1.Now()
 		f.PodClient().CreateSync(pod)
 		e2eLags = append(e2eLags,
-			framework.PodLatencyData{Name: pod.Name, Latency: metav1.Now().Time.Sub(create.Time)})
+			e2emetrics.PodLatencyData{Name: pod.Name, Latency: metav1.Now().Time.Sub(create.Time)})
 	}
 	batchLag := metav1.Now().Time.Sub(batchStartTime.Time)
-	sort.Sort(framework.LatencySlice(e2eLags))
+	sort.Sort(e2emetrics.LatencySlice(e2eLags))
 	return batchLag, e2eLags
 }
 
 // logAndVerifyLatency verifies that whether pod creation latency satisfies the limit.
-func logAndVerifyLatency(batchLag time.Duration, e2eLags []framework.PodLatencyData, podStartupLimits framework.LatencyMetric,
+func logAndVerifyLatency(batchLag time.Duration, e2eLags []e2emetrics.PodLatencyData, podStartupLimits e2emetrics.LatencyMetric,
 	podBatchStartupLimit time.Duration, testInfo map[string]string, isVerify bool) {
-	framework.PrintLatencies(e2eLags, "worst client e2e total latencies")
+	e2emetrics.PrintLatencies(e2eLags, "worst client e2e total latencies")
 
 	// TODO(coufon): do not trust 'kubelet' metrics since they are not reset!
 	latencyMetrics, _ := getPodStartLatency(kubeletAddr)
-	e2elog.Logf("Kubelet Prometheus metrics (not reset):\n%s", framework.PrettyPrintJSON(latencyMetrics))
+	e2elog.Logf("Kubelet Prometheus metrics (not reset):\n%s", e2emetrics.PrettyPrintJSON(latencyMetrics))
 
-	podStartupLatency := framework.ExtractLatencyMetrics(e2eLags)
+	podStartupLatency := e2emetrics.ExtractLatencyMetrics(e2eLags)
 
 	// log latency perf data
 	logPerfData(getLatencyPerfData(podStartupLatency, testInfo), "latency")
 
 	if isVerify {
 		// check whether e2e pod startup time is acceptable.
-		framework.ExpectNoError(framework.VerifyLatencyWithinThreshold(podStartupLimits, podStartupLatency, "pod startup"))
+		framework.ExpectNoError(e2emetrics.VerifyLatencyWithinThreshold(podStartupLimits, podStartupLatency, "pod startup"))
 
 		// check bactch pod creation latency
 		if podBatchStartupLimit > 0 {
-			Expect(batchLag <= podBatchStartupLimit).To(Equal(true), "Batch creation startup time %v exceed limit %v",
+			framework.ExpectEqual(batchLag <= podBatchStartupLimit, true, "Batch creation startup time %v exceed limit %v",
 				batchLag, podBatchStartupLimit)
 		}
 	}
 }
 
 // logThroughput calculates and logs pod creation throughput.
-func logPodCreateThroughput(batchLag time.Duration, e2eLags []framework.PodLatencyData, podsNr int, testInfo map[string]string) {
+func logPodCreateThroughput(batchLag time.Duration, e2eLags []e2emetrics.PodLatencyData, podsNr int, testInfo map[string]string) {
 	logPerfData(getThroughputPerfData(batchLag, e2eLags, podsNr, testInfo), "throughput")
 }

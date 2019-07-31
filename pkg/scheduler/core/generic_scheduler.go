@@ -195,7 +195,7 @@ func (g *genericScheduler) Schedule(pod *v1.Pod, nodeLister algorithm.NodeLister
 		return result, prefilterStatus.AsError()
 	}
 
-	nodes, err := nodeLister.List()
+	nodes := nodeLister.ListNodes()
 	if err != nil {
 		return result, err
 	}
@@ -209,7 +209,7 @@ func (g *genericScheduler) Schedule(pod *v1.Pod, nodeLister algorithm.NodeLister
 
 	trace.Step("Basic checks done")
 	startPredicateEvalTime := time.Now()
-	filteredNodes, failedPredicateMap, err := g.findNodesThatFit(pod, nodes)
+	filteredNodes, failedPredicateMap, err := g.findNodesThatFit(pluginContext, pod, nodes)
 	if err != nil {
 		return result, err
 	}
@@ -240,7 +240,7 @@ func (g *genericScheduler) Schedule(pod *v1.Pod, nodeLister algorithm.NodeLister
 	}
 
 	metaPrioritiesInterface := g.priorityMetaProducer(pod, g.nodeInfoSnapshot.NodeInfoMap)
-	priorityList, err := PrioritizeNodes(pod, g.nodeInfoSnapshot.NodeInfoMap, metaPrioritiesInterface, g.prioritizers, filteredNodes, g.extenders)
+	priorityList, err := PrioritizeNodes(pod, g.nodeInfoSnapshot.NodeInfoMap, metaPrioritiesInterface, g.prioritizers, filteredNodes, g.extenders, g.framework, pluginContext)
 	if err != nil {
 		return result, err
 	}
@@ -324,10 +324,7 @@ func (g *genericScheduler) Preempt(pod *v1.Pod, nodeLister algorithm.NodeLister,
 		klog.V(5).Infof("Pod %v/%v is not eligible for more preemption.", pod.Namespace, pod.Name)
 		return nil, nil, nil, nil
 	}
-	allNodes, err := nodeLister.List()
-	if err != nil {
-		return nil, nil, nil, err
-	}
+	allNodes := nodeLister.ListNodes()
 	if len(allNodes) == 0 {
 		return nil, nil, nil, ErrNoNodesAvailable
 	}
@@ -460,7 +457,7 @@ func (g *genericScheduler) numFeasibleNodesToFind(numAllNodes int32) (numNodes i
 
 // Filters the nodes to find the ones that fit based on the given predicate functions
 // Each node is passed through the predicate functions to determine if it is a fit
-func (g *genericScheduler) findNodesThatFit(pod *v1.Pod, nodes []*v1.Node) ([]*v1.Node, FailedPredicateMap, error) {
+func (g *genericScheduler) findNodesThatFit(pluginContext *framework.PluginContext, pod *v1.Pod, nodes []*v1.Node) ([]*v1.Node, FailedPredicateMap, error) {
 	var filtered []*v1.Node
 	failedPredicateMap := FailedPredicateMap{}
 
@@ -486,6 +483,7 @@ func (g *genericScheduler) findNodesThatFit(pod *v1.Pod, nodes []*v1.Node) ([]*v
 
 		checkNode := func(i int) {
 			nodeName := g.cache.NodeTree().Next()
+
 			fits, failedPredicates, err := podFitsOnNode(
 				pod,
 				meta,
@@ -501,6 +499,19 @@ func (g *genericScheduler) findNodesThatFit(pod *v1.Pod, nodes []*v1.Node) ([]*v
 				return
 			}
 			if fits {
+				// Iterate each plugin to verify current node
+				status := g.framework.RunFilterPlugins(pluginContext, pod, nodeName)
+				if !status.IsSuccess() {
+					predicateResultLock.Lock()
+					failedPredicateMap[nodeName] = append(failedPredicateMap[nodeName],
+						predicates.NewFailureReason(status.Message()))
+					if status.Code() != framework.Unschedulable {
+						errs[status.Message()]++
+					}
+					predicateResultLock.Unlock()
+					return
+				}
+
 				length := atomic.AddInt32(&filteredLen, 1)
 				if length > numNodesToFind {
 					cancel()
@@ -677,7 +688,8 @@ func PrioritizeNodes(
 	priorityConfigs []priorities.PriorityConfig,
 	nodes []*v1.Node,
 	extenders []algorithm.SchedulerExtender,
-) (schedulerapi.HostPriorityList, error) {
+	framework framework.Framework,
+	pluginContext *framework.PluginContext) (schedulerapi.HostPriorityList, error) {
 	// If no priority configs are provided, then the EqualPriority function is applied
 	// This is required to generate the priority list in the required format
 	if len(priorityConfigs) == 0 && len(extenders) == 0 {
@@ -762,6 +774,12 @@ func PrioritizeNodes(
 		return schedulerapi.HostPriorityList{}, errors.NewAggregate(errs)
 	}
 
+	// Run the Score plugins.
+	scoresMap, scoreStatus := framework.RunScorePlugins(pluginContext, pod, nodes)
+	if !scoreStatus.IsSuccess() {
+		return schedulerapi.HostPriorityList{}, scoreStatus.AsError()
+	}
+
 	// Summarize all scores.
 	result := make(schedulerapi.HostPriorityList, 0, len(nodes))
 
@@ -769,6 +787,12 @@ func PrioritizeNodes(
 		result = append(result, schedulerapi.HostPriority{Host: nodes[i].Name, Score: 0})
 		for j := range priorityConfigs {
 			result[i].Score += results[j][i].Score * priorityConfigs[j].Weight
+		}
+	}
+
+	for _, scoreList := range scoresMap {
+		for i := range nodes {
+			result[i].Score += scoreList[i]
 		}
 	}
 

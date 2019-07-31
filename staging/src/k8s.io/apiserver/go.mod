@@ -7,7 +7,6 @@ go 1.12
 require (
 	github.com/Azure/go-ansiterm v0.0.0-20170929234023-d6e3b3328b78 // indirect
 	github.com/BurntSushi/toml v0.3.1 // indirect
-	github.com/NYTimes/gziphandler v0.0.0-20170623195520-56545f4a5d46 // indirect
 	github.com/coreos/bbolt v1.3.1-coreos.6 // indirect
 	github.com/coreos/etcd v3.3.13+incompatible
 	github.com/coreos/go-oidc v0.0.0-20180117170138-065b426bd416
@@ -19,7 +18,7 @@ require (
 	github.com/evanphx/json-patch v4.2.0+incompatible
 	github.com/ghodss/yaml v0.0.0-20180820084758-c7ce16629ff4 // indirect
 	github.com/go-openapi/spec v0.19.2
-	github.com/gogo/protobuf v1.0.0
+	github.com/gogo/protobuf v0.0.0-20190410021324-65acae22fc9
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b // indirect
 	github.com/google/go-cmp v0.3.0
 	github.com/google/gofuzz v1.0.0
@@ -58,9 +57,9 @@ require (
 	k8s.io/client-go v0.0.0
 	k8s.io/component-base v0.0.0
 	k8s.io/klog v0.3.1
-	k8s.io/kube-openapi v0.0.0-20190228160746-b3a7cee44a30
+	k8s.io/kube-openapi v0.0.0-20190709113604-33be087ad058
 	k8s.io/utils v0.0.0-20190607212802-c55fbcfc754a
-	sigs.k8s.io/structured-merge-diff v0.0.0-20190302045857-e85c7b244fd2
+	sigs.k8s.io/structured-merge-diff v0.0.0-20190719182312-e94e05bfbbe3
 	sigs.k8s.io/yaml v1.1.0
 )
 

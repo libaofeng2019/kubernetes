@@ -366,6 +366,19 @@ const (
 	// May be overridden by a flag at startup.
 	// Deprecated: use the secure KubeControllerManagerPort instead.
 	InsecureKubeControllerManagerPort = 10252
+
+	// Mode* constants were copied from pkg/kubeapiserver/authorizer/modes
+	// to avoid kubeadm dependency on the internal module
+	// TODO: share Mode* constants in component config
+
+	// ModeABAC is the mode to use Attribute Based Access Control to authorize
+	ModeABAC string = "ABAC"
+	// ModeWebhook is the mode to make an external webhook call to authorize
+	ModeWebhook string = "Webhook"
+	// ModeRBAC is the mode to use Role Based Access Control to authorize
+	ModeRBAC string = "RBAC"
+	// ModeNode is an authorization mode that authorizes API requests made by kubelets.
+	ModeNode string = "Node"
 )
 
 var (
@@ -428,7 +441,7 @@ func EtcdSupportedVersion(versionString string) (*version.Version, error) {
 		}
 		return etcdVersion, nil
 	}
-	return nil, errors.Errorf("Unsupported or unknown Kubernetes version(%v)", kubernetesVersion)
+	return nil, errors.Errorf("unsupported or unknown Kubernetes version(%v)", kubernetesVersion)
 }
 
 // GetStaticPodDirectory returns the location on the disk where the Static Pod should be present

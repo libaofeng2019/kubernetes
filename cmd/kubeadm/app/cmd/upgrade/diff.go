@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/version"
+	client "k8s.io/client-go/kubernetes"
 	"k8s.io/klog"
 	kubeadmapi "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
 	"k8s.io/kubernetes/cmd/kubeadm/app/cmd/options"
@@ -86,7 +87,8 @@ func runDiff(flags *diffFlags, args []string) error {
 	if flags.cfgPath != "" {
 		cfg, err = configutil.LoadInitConfigurationFromFile(flags.cfgPath)
 	} else {
-		client, err := kubeconfigutil.ClientSetFromFile(flags.kubeConfigPath)
+		var client *client.Clientset
+		client, err = kubeconfigutil.ClientSetFromFile(flags.kubeConfigPath)
 		if err != nil {
 			return errors.Wrapf(err, "couldn't create a Kubernetes client from file %q", flags.kubeConfigPath)
 		}
@@ -113,12 +115,14 @@ func runDiff(flags *diffFlags, args []string) error {
 		flags.newK8sVersionStr = args[0]
 	}
 
-	k8sVer, err := version.ParseSemantic(flags.newK8sVersionStr)
+	_, err = version.ParseSemantic(flags.newK8sVersionStr)
 	if err != nil {
 		return err
 	}
 
-	specs := controlplane.GetStaticPodSpecs(&cfg.ClusterConfiguration, &cfg.LocalAPIEndpoint, k8sVer)
+	cfg.ClusterConfiguration.KubernetesVersion = flags.newK8sVersionStr
+
+	specs := controlplane.GetStaticPodSpecs(&cfg.ClusterConfiguration, &cfg.LocalAPIEndpoint)
 	for spec, pod := range specs {
 		var path string
 		switch spec {

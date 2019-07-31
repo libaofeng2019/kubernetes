@@ -34,8 +34,8 @@ import (
 )
 
 const (
-	// renewInterval is the interval at which the lease is renewed
-	renewInterval = 10 * time.Second
+	// renewIntervalFraction is the fraction of lease duration to renew the lease
+	renewIntervalFraction = 0.25
 	// maxUpdateRetries is the number of immediate, successive retries the Kubelet will attempt
 	// when renewing the lease before it waits for the renewal interval before trying again,
 	// similar to what we do for node status retries
@@ -65,12 +65,13 @@ func NewController(clock clock.Clock, client clientset.Interface, holderIdentity
 	if client != nil {
 		leaseClient = client.CoordinationV1().Leases(corev1.NamespaceNodeLease)
 	}
+	leaseDuration := time.Duration(leaseDurationSeconds) * time.Second
 	return &controller{
 		client:                     client,
 		leaseClient:                leaseClient,
 		holderIdentity:             holderIdentity,
 		leaseDurationSeconds:       leaseDurationSeconds,
-		renewInterval:              renewInterval,
+		renewInterval:              time.Duration(float64(leaseDuration) * renewIntervalFraction),
 		clock:                      clock,
 		onRepeatedHeartbeatFailure: onRepeatedHeartbeatFailure,
 	}

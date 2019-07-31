@@ -34,9 +34,9 @@ import (
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	scaleclient "k8s.io/client-go/scale"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/kubectl/pkg/util"
 	deploymentutil "k8s.io/kubectl/pkg/util/deployment"
 	"k8s.io/kubectl/pkg/util/podutils"
-	"k8s.io/kubernetes/pkg/kubectl/util"
 	"k8s.io/utils/integer"
 	utilpointer "k8s.io/utils/pointer"
 )
@@ -739,11 +739,6 @@ func AddDeploymentKeyToReplicationController(oldRc *corev1.ReplicationController
 	if oldRc.Spec.Selector == nil {
 		oldRc.Spec.Selector = map[string]string{}
 	}
-	// Copy the old selector, so that we can scrub out any orphaned pods
-	selectorCopy := map[string]string{}
-	for k, v := range oldRc.Spec.Selector {
-		selectorCopy[k] = v
-	}
 	applyUpdate = func(rc *corev1.ReplicationController) {
 		rc.Spec.Selector[deploymentKey] = deploymentValue
 	}
@@ -755,7 +750,7 @@ func AddDeploymentKeyToReplicationController(oldRc *corev1.ReplicationController
 	// Clean up any orphaned pods that don't have the new label, this can happen if the rc manager
 	// doesn't see the update to its pod template and creates a new pod with the old labels after
 	// we've finished re-adopting existing pods to the rc.
-	selector = labels.SelectorFromSet(selectorCopy)
+	selector = labels.SelectorFromSet(oldRc.Spec.Selector)
 	options = metav1.ListOptions{LabelSelector: selector.String()}
 	if podList, err = podClient.Pods(namespace).List(options); err != nil {
 		return nil, err

@@ -106,6 +106,8 @@ const (
 	CheckNodeDiskPressurePred = "CheckNodeDiskPressure"
 	// CheckNodePIDPressurePred defines the name of predicate CheckNodePIDPressure.
 	CheckNodePIDPressurePred = "CheckNodePIDPressure"
+	// EvenPodsSpreadPred defines the name of predicate EvenPodsSpread
+	EvenPodsSpreadPred = "EvenPodsSpread"
 
 	// DefaultMaxGCEPDVolumes defines the maximum number of PD Volumes for GCE
 	// GCE instances can have up to 16 PD volumes attached.
@@ -148,7 +150,7 @@ var (
 		PodToleratesNodeTaintsPred, PodToleratesNodeNoExecuteTaintsPred, CheckNodeLabelPresencePred,
 		CheckServiceAffinityPred, MaxEBSVolumeCountPred, MaxGCEPDVolumeCountPred, MaxCSIVolumeCountPred,
 		MaxAzureDiskVolumeCountPred, MaxCinderVolumeCountPred, CheckVolumeBindingPred, NoVolumeZoneConflictPred,
-		CheckNodeMemoryPressurePred, CheckNodePIDPressurePred, CheckNodeDiskPressurePred, MatchInterPodAffinityPred}
+		CheckNodeMemoryPressurePred, CheckNodePIDPressurePred, CheckNodeDiskPressurePred, EvenPodsSpreadPred, MatchInterPodAffinityPred}
 )
 
 // FitPredicate is a function that indicates if a pod fits into an existing node.
@@ -726,6 +728,9 @@ func (c *VolumeZoneChecker) predicate(pod *v1.Pod, meta PredicateMetadata, nodeI
 // the max in each dimension iteratively. In contrast, we sum the resource vectors for
 // regular containers since they run simultaneously.
 //
+// If Pod Overhead is specified and the feature gate is set, the resources defined for Overhead
+// are added to the calculated Resource request sum
+//
 // Example:
 //
 // Pod:
@@ -754,6 +759,11 @@ func GetResourceRequest(pod *v1.Pod) *schedulernodeinfo.Resource {
 	// take max_resource(sum_pod, any_init_container)
 	for _, container := range pod.Spec.InitContainers {
 		result.SetMaxResource(container.Resources.Requests)
+	}
+
+	// If Overhead is being utilized, add to the total requests for the pod
+	if pod.Spec.Overhead != nil && utilfeature.DefaultFeatureGate.Enabled(features.PodOverhead) {
+		result.Add(pod.Spec.Overhead)
 	}
 
 	return result
@@ -843,9 +853,9 @@ func nodeMatchesNodeSelectorTerms(node *v1.Node, nodeSelectorTerms []v1.NodeSele
 	return v1helper.MatchNodeSelectorTerms(nodeSelectorTerms, labels.Set(node.Labels), fields.Set(nodeFields))
 }
 
-// podMatchesNodeSelectorAndAffinityTerms checks whether the pod is schedulable onto nodes according to
+// PodMatchesNodeSelectorAndAffinityTerms checks whether the pod is schedulable onto nodes according to
 // the requirements in both NodeAffinity and nodeSelector.
-func podMatchesNodeSelectorAndAffinityTerms(pod *v1.Pod, node *v1.Node) bool {
+func PodMatchesNodeSelectorAndAffinityTerms(pod *v1.Pod, node *v1.Node) bool {
 	// Check if node.Labels match pod.Spec.NodeSelector.
 	if len(pod.Spec.NodeSelector) > 0 {
 		selector := labels.SelectorFromSet(pod.Spec.NodeSelector)
@@ -896,7 +906,7 @@ func PodMatchNodeSelector(pod *v1.Pod, meta PredicateMetadata, nodeInfo *schedul
 	if node == nil {
 		return false, nil, fmt.Errorf("node not found")
 	}
-	if podMatchesNodeSelectorAndAffinityTerms(pod, node) {
+	if PodMatchesNodeSelectorAndAffinityTerms(pod, node) {
 		return true, nil, nil
 	}
 	return false, []PredicateFailureReason{ErrNodeSelectorNotMatch}, nil
@@ -1702,5 +1712,69 @@ func (c *VolumeBindingChecker) predicate(pod *v1.Pod, meta PredicateMetadata, no
 
 	// All volumes bound or matching PVs found for all unbound PVCs
 	klog.V(5).Infof("All PVCs found matches for pod %v/%v, node %q", pod.Namespace, pod.Name, node.Name)
+	return true, nil, nil
+}
+
+// EvenPodsSpreadPredicate checks if a pod can be scheduled on a node which satisfies
+// its topologySpreadConstraints.
+func EvenPodsSpreadPredicate(pod *v1.Pod, meta PredicateMetadata, nodeInfo *schedulernodeinfo.NodeInfo) (bool, []PredicateFailureReason, error) {
+	node := nodeInfo.Node()
+	if node == nil {
+		return false, nil, fmt.Errorf("node not found")
+	}
+	constraints := getHardTopologySpreadConstraints(pod)
+	if len(constraints) == 0 {
+		return true, nil, nil
+	}
+
+	var topologyPairsPodSpreadMap *topologyPairsPodSpreadMap
+	if predicateMeta, ok := meta.(*predicateMetadata); ok {
+		topologyPairsPodSpreadMap = predicateMeta.topologyPairsPodSpreadMap
+	} else { // We don't have precomputed metadata. We have to follow a slow path to check spread constraints.
+		// TODO(Huang-Wei): get it implemented
+		return false, nil, errors.New("metadata not pre-computed for EvenPodsSpreadPredicate")
+	}
+
+	if topologyPairsPodSpreadMap == nil || len(topologyPairsPodSpreadMap.topologyKeyToMinPodsMap) == 0 {
+		return true, nil, nil
+	}
+
+	podLabelSet := labels.Set(pod.Labels)
+	for _, constraint := range constraints {
+		tpKey := constraint.TopologyKey
+		tpVal, ok := node.Labels[constraint.TopologyKey]
+		if !ok {
+			klog.V(5).Infof("node '%s' doesn't have required label '%s'", node.Name, tpKey)
+			return false, []PredicateFailureReason{ErrTopologySpreadConstraintsNotMatch}, nil
+		}
+
+		selfMatch, err := PodMatchesSpreadConstraint(podLabelSet, constraint)
+		if err != nil {
+			return false, nil, err
+		}
+		selfMatchNum := 0
+		if selfMatch {
+			selfMatchNum = 1
+		}
+
+		pair := topologyPair{key: tpKey, value: tpVal}
+		minMatchNum, ok := topologyPairsPodSpreadMap.topologyKeyToMinPodsMap[tpKey]
+		if !ok {
+			// error which should not happen
+			klog.Errorf("internal error: get minMatchNum from key %q of %#v", tpKey, topologyPairsPodSpreadMap.topologyKeyToMinPodsMap)
+			continue
+		}
+		// judging criteria:
+		// 'existing matching num' + 'if self-match (1 or 0)' - 'global min matching num' <= 'maxSkew'
+		matchNum := len(topologyPairsPodSpreadMap.topologyPairToPods[pair])
+
+		// cast to int to avoid potential overflow.
+		skew := matchNum + selfMatchNum - int(minMatchNum)
+		if skew > int(constraint.MaxSkew) {
+			klog.V(5).Infof("node '%s' failed spreadConstraint[%s]: matchNum(%d) + selfMatchNum(%d) - minMatchNum(%d) > maxSkew(%d)", node.Name, tpKey, matchNum, selfMatchNum, minMatchNum, constraint.MaxSkew)
+			return false, []PredicateFailureReason{ErrTopologySpreadConstraintsNotMatch}, nil
+		}
+	}
+
 	return true, nil, nil
 }

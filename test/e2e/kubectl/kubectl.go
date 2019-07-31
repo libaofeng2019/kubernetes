@@ -64,6 +64,7 @@ import (
 	jobutil "k8s.io/kubernetes/test/e2e/framework/job"
 	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	"k8s.io/kubernetes/test/e2e/framework/testfiles"
 	"k8s.io/kubernetes/test/e2e/scheduling"
 	testutils "k8s.io/kubernetes/test/utils"
@@ -74,7 +75,7 @@ import (
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega"
 
-	"k8s.io/kubernetes/pkg/kubectl/polymorphichelpers"
+	"k8s.io/kubectl/pkg/polymorphichelpers"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 )
 
@@ -594,7 +595,7 @@ var _ = SIGDescribe("Kubectl client", func() {
 			ginkgo.By("executing a command with run")
 			framework.RunKubectlOrDie("run", podName, "--generator=run-pod/v1", "--image="+busyboxImage, "--restart=OnFailure", nsFlag, "--", "sh", "-c", "sleep 10; seq 100 | while read i; do echo $i; sleep 0.01; done; echo EOF")
 
-			if !e2epod.CheckPodsRunningReady(c, ns, []string{podName}, framework.PodStartTimeout) {
+			if !e2epod.CheckPodsRunningReadyOrSucceeded(c, ns, []string{podName}, framework.PodStartTimeout) {
 				e2elog.Failf("Pod for run-log-test was not ready")
 			}
 
@@ -1144,7 +1145,7 @@ metadata:
 			waitForOrFailWithDebug(1)
 			forEachPod(func(pod v1.Pod) {
 				e2elog.Logf("wait on redis-master startup in %v ", ns)
-				framework.LookForStringInLog(ns, pod.Name, "redis-master", "The server is now ready to accept connections", framework.PodStartTimeout)
+				framework.LookForStringInLog(ns, pod.Name, "redis-master", "Ready to accept connections", framework.PodStartTimeout)
 			})
 			validateService := func(name string, servicePort int, timeout time.Duration) {
 				err := wait.Poll(framework.Poll, timeout, func() (bool, error) {
@@ -1179,13 +1180,13 @@ metadata:
 				})
 				framework.ExpectNoError(err)
 
-				service, err := c.CoreV1().Services(ns).Get(name, metav1.GetOptions{})
+				e2eservice, err := c.CoreV1().Services(ns).Get(name, metav1.GetOptions{})
 				framework.ExpectNoError(err)
 
-				if len(service.Spec.Ports) != 1 {
+				if len(e2eservice.Spec.Ports) != 1 {
 					e2elog.Failf("1 port is expected")
 				}
-				port := service.Spec.Ports[0]
+				port := e2eservice.Spec.Ports[0]
 				if port.Port != int32(servicePort) {
 					e2elog.Failf("Wrong service port: %d", port.Port)
 				}
@@ -1323,7 +1324,7 @@ metadata:
 			waitForOrFailWithDebug(1)
 			forEachPod(func(pod v1.Pod) {
 				ginkgo.By("checking for a matching strings")
-				_, err := framework.LookForStringInLog(ns, pod.Name, containerName, "The server is now ready to accept connections", framework.PodStartTimeout)
+				_, err := framework.LookForStringInLog(ns, pod.Name, containerName, "Ready to accept connections", framework.PodStartTimeout)
 				framework.ExpectNoError(err)
 
 				ginkgo.By("limiting log lines")
@@ -2180,7 +2181,7 @@ func waitForGuestbookResponse(c clientset.Interface, cmd, arg, expectedResponse 
 }
 
 func makeRequestToGuestbook(c clientset.Interface, cmd, value string, ns string) (string, error) {
-	proxyRequest, errProxy := framework.GetServicesProxyRequest(c, c.CoreV1().RESTClient().Get())
+	proxyRequest, errProxy := e2eservice.GetServicesProxyRequest(c, c.CoreV1().RESTClient().Get())
 	if errProxy != nil {
 		return "", errProxy
 	}

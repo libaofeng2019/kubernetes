@@ -29,13 +29,13 @@ import (
 	"k8s.io/cli-runtime/pkg/resource"
 	autoscalingv1client "k8s.io/client-go/kubernetes/typed/autoscaling/v1"
 	"k8s.io/client-go/scale"
+	cmdutil "k8s.io/kubectl/pkg/cmd/util"
+	"k8s.io/kubectl/pkg/generate"
+	generateversioned "k8s.io/kubectl/pkg/generate/versioned"
+	"k8s.io/kubectl/pkg/scheme"
+	"k8s.io/kubectl/pkg/util"
+	"k8s.io/kubectl/pkg/util/i18n"
 	"k8s.io/kubectl/pkg/util/templates"
-	"k8s.io/kubernetes/pkg/kubectl"
-	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"k8s.io/kubernetes/pkg/kubectl/generate"
-	generateversioned "k8s.io/kubernetes/pkg/kubectl/generate/versioned"
-	"k8s.io/kubernetes/pkg/kubectl/scheme"
-	"k8s.io/kubernetes/pkg/kubectl/util/i18n"
 )
 
 var (
@@ -258,7 +258,7 @@ func (o *AutoscaleOptions) Run() error {
 			return printer.PrintObj(hpa, o.Out)
 		}
 
-		if err := kubectl.CreateOrUpdateAnnotation(o.createAnnotation, hpa, scheme.DefaultJSONEncoder()); err != nil {
+		if err := util.CreateOrUpdateAnnotation(o.createAnnotation, hpa, scheme.DefaultJSONEncoder()); err != nil {
 			return err
 		}
 

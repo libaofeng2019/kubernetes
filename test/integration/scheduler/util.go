@@ -61,19 +61,19 @@ import (
 )
 
 type testContext struct {
-	closeFn                framework.CloseFunc
-	httpServer             *httptest.Server
-	ns                     *v1.Namespace
-	clientSet              *clientset.Clientset
-	informerFactory        informers.SharedInformerFactory
-	schedulerConfigFactory factory.Configurator
-	schedulerConfig        *factory.Config
-	scheduler              *scheduler.Scheduler
-	stopCh                 chan struct{}
+	closeFn             framework.CloseFunc
+	httpServer          *httptest.Server
+	ns                  *v1.Namespace
+	clientSet           *clientset.Clientset
+	informerFactory     informers.SharedInformerFactory
+	schedulerConfigArgs *factory.ConfigFactoryArgs
+	schedulerConfig     *factory.Config
+	scheduler           *scheduler.Scheduler
+	stopCh              chan struct{}
 }
 
 // createConfiguratorWithPodInformer creates a configurator for scheduler.
-func createConfiguratorWithPodInformer(
+func createConfiguratorArgsWithPodInformer(
 	schedulerName string,
 	clientSet clientset.Interface,
 	podInformer coreinformers.PodInformer,
@@ -82,8 +82,8 @@ func createConfiguratorWithPodInformer(
 	plugins *schedulerconfig.Plugins,
 	pluginConfig []schedulerconfig.PluginConfig,
 	stopCh <-chan struct{},
-) factory.Configurator {
-	return factory.NewConfigFactory(&factory.ConfigFactoryArgs{
+) *factory.ConfigFactoryArgs {
+	return &factory.ConfigFactoryArgs{
 		SchedulerName:                  schedulerName,
 		Client:                         clientSet,
 		NodeInformer:                   informerFactory.Core().V1().Nodes(),
@@ -105,7 +105,7 @@ func createConfiguratorWithPodInformer(
 		PercentageOfNodesToScore:       schedulerapi.DefaultPercentageOfNodesToScore,
 		BindTimeoutSeconds:             600,
 		StopCh:                         stopCh,
-	})
+	}
 }
 
 // initTestMasterAndScheduler initializes a test environment and creates a master with default
@@ -186,16 +186,17 @@ func initTestSchedulerWithOptions(
 		podInformer = context.informerFactory.Core().V1().Pods()
 	}
 
-	context.schedulerConfigFactory = createConfiguratorWithPodInformer(
+	context.schedulerConfigArgs = createConfiguratorArgsWithPodInformer(
 		v1.DefaultSchedulerName, context.clientSet, podInformer, context.informerFactory, pluginRegistry, plugins,
 		pluginConfig, context.stopCh)
+	configFactory := factory.NewConfigFactory(context.schedulerConfigArgs)
 
 	var err error
 
 	if policy != nil {
-		context.schedulerConfig, err = context.schedulerConfigFactory.CreateFromConfig(*policy)
+		context.schedulerConfig, err = configFactory.CreateFromConfig(*policy)
 	} else {
-		context.schedulerConfig, err = context.schedulerConfigFactory.Create()
+		context.schedulerConfig, err = configFactory.Create()
 	}
 
 	if err != nil {
@@ -732,6 +733,10 @@ func waitCachedPodsStable(context *testContext, pods []*v1.Pod) error {
 // deletePod deletes the given pod in the given namespace.
 func deletePod(cs clientset.Interface, podName string, nsName string) error {
 	return cs.CoreV1().Pods(nsName).Delete(podName, metav1.NewDeleteOptions(0))
+}
+
+func getPod(cs clientset.Interface, podName string, podNamespace string) (*v1.Pod, error) {
+	return cs.CoreV1().Pods(podNamespace).Get(podName, metav1.GetOptions{})
 }
 
 // cleanupPods deletes the given pods and waits for them to be actually deleted.
